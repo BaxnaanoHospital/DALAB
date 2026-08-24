@@ -4,7 +4,6 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Codsiyada Baxnaano — Maamule &amp; Shirkadaha</title>
-<link rel="icon" type="image/png" href="https://github.com/Cs-company12/DOCTOR-PANAL/raw/main/11.png">
 <meta name="theme-color" content="#0B4F4A" />
 <link rel="manifest" href="manifest.json" />
 <link rel="icon" href="icon-192.png" />
@@ -419,7 +418,7 @@ button{font-family:inherit;cursor:pointer;}
         <div class="name" id="whoName">—</div>
         <span class="role-pill" id="whoRole">—</span>
       </div>
-      <button class="logout-btn" onclick="openProfileModal()" title="Xogta Akoonka"><i class="bi bi-person-gear"></i></button>
+      <button class="logout-btn" id="profileBtn" onclick="openProfileModal()" title="Xogta Akoonka"><i class="bi bi-person-gear"></i></button>
       <button class="logout-btn" onclick="logout()" title="Ka bax"><i class="bi bi-box-arrow-right"></i></button>
     </div>
   </div>
@@ -571,7 +570,7 @@ button{font-family:inherit;cursor:pointer;}
 
 <div class="modal-backdrop" id="profileModalBackdrop">
   <div class="modal-card">
-    <div class="modal-head"><h3>Xogta Akoonkaaga</h3><button onclick="closeModal('profileModalBackdrop')"><i class="bi bi-x-lg"></i></button></div>
+    <div class="modal-head"><h3 id="profileModalTitle">Xogta Akoonkaaga</h3><button onclick="closeModal('profileModalBackdrop')"><i class="bi bi-x-lg"></i></button></div>
     <div class="modal-body">
       <div class="field"><label>Magaca</label><input type="text" id="profileNameDisplay" disabled style="background:#F0EFE7;color:var(--muted);"/></div>
       <div class="field"><label>Username</label><input type="text" id="profileUserDisplay" disabled style="background:#F0EFE7;color:var(--muted);"/></div>
@@ -730,25 +729,27 @@ function openProfileModal(){
   document.getElementById("changePasswordForm").reset();
   const contactBox = document.getElementById("profileContactFields");
   if(session.role === "company"){
-    contactBox.style.display = "block";
-    const c = companies.find(x=>x.id===session.id) || {};
-    document.getElementById("pfPhone").value = c.phone || "";
-    document.getElementById("pfContact").value = c.contact_person || "";
-    document.getElementById("pfEmail").value = c.email || "";
+    contactBox.style.display = "none";
   } else {
     contactBox.style.display = "none";
   }
+  document.getElementById("profileModalTitle").textContent = session.role === "company" ? "Beddel Furaha Sirta ah" : "Xogta Akoonkaaga";
   document.getElementById("profileModalBackdrop").classList.add("open");
 }
 async function saveProfileContact(){
-  const {error} = await sb.from("proc_companies").update({
-    phone: document.getElementById("pfPhone").value.trim() || null,
-    contact_person: document.getElementById("pfContact").value.trim() || null,
-    email: document.getElementById("pfEmail").value.trim() || null,
-  }).eq("id", session.id);
-  if(error){ toast("error", "Khalad ayaa dhacay"); return; }
-  toast("success", "Xogta xiriirka waa la keydiyay");
-  await loadCompanies();
+  if(!sb || session.role !== "company") return;
+  try{
+    const {error} = await sb.from("proc_companies").update({
+      phone: document.getElementById("pfPhone").value.trim() || null,
+      contact_person: document.getElementById("pfContact").value.trim() || null,
+      email: document.getElementById("pfEmail").value.trim() || null,
+    }).eq("id", session.id);
+    if(error) throw error;
+    toast("success", "Xogta xiriirka waa la keydiyay");
+    await loadCompanies();
+  }catch(err){
+    Swal.fire({icon:"error", title:"Xogta lama keydin", text:err.message || "Fadlan isku day mar kale.", confirmButtonColor:"#0B4F4A"});
+  }
 }
 async function submitChangePassword(e){
   e.preventDefault();
@@ -762,7 +763,8 @@ async function submitChangePassword(e){
     const rpcName = session.role === "admin" ? "proc_admin_change_password" : "proc_company_change_password";
     const {data, error} = await sb.rpc(rpcName, {p_id: session.id, p_old_password: oldPw, p_new_password: newPw});
     if(error) throw error;
-    if(!data){ Swal.fire({icon:"error", title:"Furaha hore waa khalad", confirmButtonColor:"#0B4F4A"}); return; }
+    const changed = data === true || data === "true" || (Array.isArray(data) && data[0] === true) || data?.success === true;
+    if(!changed){ Swal.fire({icon:"error", title:"Furaha hore waa khalad", text:"Hubi furaha aad hadda isticmaasho.", confirmButtonColor:"#0B4F4A"}); return; }
     closeModal("profileModalBackdrop");
     toast("success", "Furaha sirta ah waa la cusboonaysiiyay");
   }catch(err){
@@ -802,18 +804,29 @@ async function boot(){
   document.getElementById("screen-login").style.display = "none";
   document.getElementById("app").style.display = "block";
   document.getElementById("whoName").textContent = session.name;
-  document.getElementById("whoRole").textContent = session.role === "admin" ? "Maamule" : "Shirkad";
+  document.getElementById("whoRole").textContent = session.role === "admin" ? "Maamule" : "Employee";
+  const profileButton = document.getElementById("profileBtn");
+  if(profileButton && session.role === "company"){
+    profileButton.style.display = "none";
+    document.getElementById("view-requests").style.display = "none";
+  }
 
   buildNav();
-  showView(session.role === "admin" ? "dashboard" : "requests");
+  showView(session.role === "admin" ? "dashboard" : "chat");
 
   await loadCompanies();
   await loadRequests();
   if(session.role === "admin"){ renderDashboard(); renderCompanies(); }
   renderRequests();
-  buildChatList();
-  subscribeRealtime();
-  trackPresence();
+  if(session.role === "admin"){
+    buildChatList();
+    subscribeRealtime();
+    trackPresence();
+  } else {
+    buildChatList();
+    subscribeRealtime();
+    trackPresence();
+  }
 }
 
 function buildNav(){
@@ -824,8 +837,7 @@ function buildNav(){
     {id:"chat", icon:"bi-chat-dots", label:"Fariimaha"},
   ];
   const companyNav = [
-    {id:"requests", icon:"bi-clipboard2-check", label:"Codsiyada"},
-    {id:"chat", icon:"bi-chat-dots", label:"Fariimaha"},
+    {id:"chat", icon:"bi-chat-dots", label:"Admin Messages"},
   ];
   const items = session.role === "admin" ? adminNav : companyNav;
   const build = (container, mobile)=>{
@@ -845,6 +857,7 @@ function buildNav(){
 
 function showView(id){
   if(!id) id = "dashboard";
+  if(session.role === "company" && id !== "chat") id = "chat";
   if(currentView !== "detail") prevView = currentView;
   currentView = id;
   document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
@@ -852,14 +865,17 @@ function showView(id){
   document.querySelectorAll(".nav-btn").forEach(b=>b.classList.toggle("active", b.dataset.navId===id));
 
   if(id === "requests"){
-    document.getElementById("reqViewTitle").textContent = session.role==="admin" ? "Codsiyada" : "Codsiyada Ila Xiriira";
+    document.getElementById("reqViewTitle").textContent = session.role==="admin" ? "Codsiyada" : "Codsiyada Maamulaha uu kuu diray";
     document.getElementById("reqViewSub").textContent = session.role==="admin" ? "Dhammaan codsiyada la diray shirkadaha." : "Codsiyada Maamulaha uu kuu diray.";
     document.getElementById("newReqBtn").style.display = session.role==="admin" ? "flex" : "none";
     buildReqTabs(); renderRequests();
   }
   if(id === "dashboard") renderDashboard();
   if(id === "companies") renderCompanies();
-  if(id === "chat") buildChatList();
+  if(id === "chat"){
+    buildChatList();
+    if(session.role === "company") openChatFor(session.id, true);
+  }
   window.scrollTo({top:0, behavior:"smooth"});
 }
 
@@ -1267,7 +1283,7 @@ function buildChatList(){
   } else {
     document.getElementById("chatSub").textContent = "Fariimaha aad la sheekaysanayso Maamulaha.";
     listEl.style.display = "none";
-    openChatFor(session.id, true);
+    listEl.innerHTML = "";
   }
 }
 function lastMsgPreview(companyId){
@@ -1281,7 +1297,7 @@ function lastMsgPreview(companyId){
 
 async function openChatFor(companyId, isCompanySelf){
   activeChatCompanyId = companyId;
-  showView("chat");
+  if(currentView !== "chat") showView("chat");
   document.querySelectorAll(".chat-list-item").forEach(el=>el.classList.toggle("active", el.dataset.cid===companyId));
 
   if(!messagesCache[companyId]){
@@ -1358,16 +1374,35 @@ function backToChatList(){
 
 async function sendChatMessage(){
   const input = document.getElementById("chatInput");
+  if(!input || !sb || !session) return;
   const text = input.value.trim();
   if(!text || !activeChatCompanyId) return;
-  input.value = "";
-  const {error} = await sb.from("proc_messages").insert({
-    company_id: activeChatCompanyId,
-    sender_type: session.role,
-    sender_id: session.id,
-    message: text
-  });
-  if(error){ toast("error", "Fariinta lama dirin"); return; }
+  const button = document.querySelector(".chat-send");
+  if(button) button.disabled = true;
+  try{
+    const {error} = await sb.from("proc_messages").insert({
+      company_id: activeChatCompanyId,
+      sender_type: session.role,
+      sender_id: session.id,
+      message: text
+    });
+    if(error) throw error;
+    input.value = "";
+    await refreshActiveConversation();
+  }catch(err){
+    toast("error", err.message || "Fariinta lama dirin");
+  }finally{
+    if(button) button.disabled = false;
+  }
+}
+
+async function refreshActiveConversation(){
+  if(!sb || !activeChatCompanyId) return;
+  const {data, error} = await sb.from("proc_messages").select("*").eq("company_id", activeChatCompanyId).order("created_at");
+  if(error){ showConnectionNote("Fariinta waa la diray, laakiin wada hadalka lama cusboonaysiin karin."); return; }
+  messagesCache[activeChatCompanyId] = data || [];
+  if(currentView === "chat") renderChatWindow(activeChatCompanyId, session.role === "company");
+  buildChatList();
 }
 
 function compressImageFile(file){
@@ -1412,16 +1447,21 @@ async function sendChatAttachment(dataUrl, mime, name){
   const captionInput = document.getElementById("chatInput");
   const caption = captionInput ? captionInput.value.trim() : "";
   if(captionInput) captionInput.value = "";
-  const {error} = await sb.from("proc_messages").insert({
-    company_id: activeChatCompanyId,
-    sender_type: session.role,
-    sender_id: session.id,
-    message: caption || null,
-    attachment_data: dataUrl,
-    attachment_mime: mime,
-    attachment_name: name
-  });
-  if(error){ toast("error", "Sawirka lama dirin"); }
+  try{
+    const {error} = await sb.from("proc_messages").insert({
+      company_id: activeChatCompanyId,
+      sender_type: session.role,
+      sender_id: session.id,
+      message: caption || null,
+      attachment_data: dataUrl,
+      attachment_mime: mime,
+      attachment_name: name
+    });
+    if(error) throw error;
+    await refreshActiveConversation();
+  }catch(err){
+    toast("error", err.message || "Sawirka lama dirin");
+  }
 }
 
 function updateNavChatBadge(){
@@ -1436,12 +1476,17 @@ function updateNavChatBadge(){
    REALTIME
 =============================================================*/
 function subscribeRealtime(){
-  sb.channel("proc-live")
+  const channel = sb.channel("proc-live")
     .on("postgres_changes", {event:"*", schema:"public", table:"proc_requests"}, handleRequestChange)
-    .on("postgres_changes", {event:"*", schema:"public", table:"proc_responses"}, handleResponseChange)
-    .on("postgres_changes", {event:"*", schema:"public", table:"proc_messages"}, handleMessageChange)
-    .on("postgres_changes", {event:"*", schema:"public", table:"proc_companies"}, async ()=>{ await loadCompanies(); if(currentView==="companies") renderCompanies(); buildChatList(); })
-    .subscribe();
+    .on("postgres_changes", {event:"*", schema:"public", table:"proc_responses"}, handleResponseChange);
+  if(session.role === "admin"){
+    channel
+      .on("postgres_changes", {event:"*", schema:"public", table:"proc_messages"}, handleMessageChange)
+      .on("postgres_changes", {event:"*", schema:"public", table:"proc_companies"}, async ()=>{ await loadCompanies(); if(currentView==="companies") renderCompanies(); buildChatList(); });
+  } else {
+    channel.on("postgres_changes", {event:"*", schema:"public", table:"proc_messages", filter:`company_id=eq.${session.id}`}, handleMessageChange);
+  }
+  channel.subscribe();
 }
 
 async function handleRequestChange(payload){
