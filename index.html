@@ -825,6 +825,14 @@ async function bootApp(){
   subscribeRealtime();
   trackPresence();
 
+  if(session.role === "company"){
+    buildChatList();
+    await loadConversation(session.id, false, true);
+    renderChatWindow(session.id, true);
+    loadRequests();
+    return;
+  }
+
   await Promise.all([loadCompanies(), loadRequests()]);
   if(session.role === "admin"){ renderDashboard(); renderCompanies(); }
   renderRequests();
@@ -1314,9 +1322,18 @@ async function openChatFor(companyId, isCompanySelf){
   sb.from("proc_messages").update({is_read:true}).eq("company_id", companyId).eq("sender_type", otherType).eq("is_read", false).then(()=>{});
 }
 
-async function loadConversation(companyId, force = false){
-  if(!force && messagesCache[companyId]) return messagesCache[companyId];
+async function loadConversation(companyId, force = false, preferCache = false){
+  if(!force && messagesCache[companyId]){
+    if(preferCache) void loadConversation(companyId, true);
+    return messagesCache[companyId];
+  }
   if(messageLoadPromises[companyId] && !force) return messageLoadPromises[companyId];
+  const cached = readMessageCache(companyId);
+  if(cached && !messagesCache[companyId]){
+    messagesCache[companyId] = cached;
+    if(currentView === "chat" && activeChatCompanyId === companyId) renderChatWindow(companyId, session.role === "company");
+    if(preferCache){ void loadConversation(companyId, true); return cached; }
+  }
   const request = sb.from("proc_messages").select("*").eq("company_id", companyId).order("created_at")
     .then(({data, error})=>{
       if(error) throw error;
@@ -1324,10 +1341,23 @@ async function loadConversation(companyId, force = false){
       messagesCache[companyId] = [...existing, ...(data || [])]
         .filter((message, index, all)=>all.findIndex(item=>item.id===message.id)===index)
         .sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+      writeMessageCache(companyId, messagesCache[companyId]);
+      if(currentView === "chat" && activeChatCompanyId === companyId) renderChatWindow(companyId, session.role === "company");
       return messagesCache[companyId];
     }).catch(()=>messagesCache[companyId] || []);
   messageLoadPromises[companyId] = request;
   try{ return await request; } finally { delete messageLoadPromises[companyId]; }
+}
+
+function messageCacheKey(companyId){ return "bax_proc_messages_" + companyId; }
+function readMessageCache(companyId){
+  try{
+    const cached = JSON.parse(sessionStorage.getItem(messageCacheKey(companyId)) || "null");
+    return Array.isArray(cached) ? cached : null;
+  }catch(_){ return null; }
+}
+function writeMessageCache(companyId, messages){
+  try{ sessionStorage.setItem(messageCacheKey(companyId), JSON.stringify(messages)); }catch(_){ /* Storage is optional. */ }
 }
 
 function appendMessage(message){
@@ -1336,6 +1366,7 @@ function appendMessage(message){
   if(!messages.some(item=>item.id===message.id)) messages.push(message);
   messages.sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
   messagesCache[message.company_id] = messages;
+  writeMessageCache(message.company_id, messages);
 }
 
 function viewImageFull(src){
@@ -1346,6 +1377,7 @@ function renderChatWindow(companyId, isCompanySelf){
   const company = companies.find(c=>c.id===companyId);
   const title = session.role === "admin" ? (company ? company.company_name : "Shirkad") : "Maamulaha Baxnaano";
   const msgs = messagesCache[companyId] || [];
+  const draft = document.getElementById("chatInput")?.value || "";
   const online = session.role==="admin" ? onlinePeers["company:"+companyId] : onlinePeers["admin"];
 
   let msgsHtml = "";
@@ -1388,6 +1420,8 @@ function renderChatWindow(companyId, isCompanySelf){
     </div>`;
   const box = document.getElementById("chatMsgs");
   box.scrollTop = box.scrollHeight;
+  const input = document.getElementById("chatInput");
+  if(input && draft) input.value = draft;
   document.getElementById("chatList")?.classList.add("hide-mobile");
   document.getElementById("chatMain")?.classList.remove("hide-mobile");
 }
