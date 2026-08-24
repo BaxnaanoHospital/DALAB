@@ -615,6 +615,9 @@ let activeChatCompanyId = null;
 let messagesCache = {}; // companyId -> [messages]
 let unreadByCompany = {}; // companyId -> count
 let onlinePeers = {}; // key -> true
+let realtimeChannel = null;
+let bootPromise = null;
+let messageLoadPromises = {};
 
 const STATUS_LABEL = {pending:"Sugaya", responded:"La Jawaabay", accepted:"La Aqbalay", rejected:"La Diiday", closed:"La Xiray"};
 
@@ -801,6 +804,12 @@ function shareRequestWhatsApp(requestId){
 =============================================================*/
 async function boot(){
   if(!session || !sb) return;
+  if(bootPromise) return bootPromise;
+  bootPromise = bootApp();
+  try{ await bootPromise; } finally { bootPromise = null; }
+}
+
+async function bootApp(){
   document.getElementById("screen-login").style.display = "none";
   document.getElementById("app").style.display = "block";
   document.getElementById("whoName").textContent = session.name;
@@ -813,20 +822,14 @@ async function boot(){
 
   buildNav();
   showView(session.role === "admin" ? "dashboard" : "chat");
+  subscribeRealtime();
+  trackPresence();
 
-  await loadCompanies();
-  await loadRequests();
+  await Promise.all([loadCompanies(), loadRequests()]);
   if(session.role === "admin"){ renderDashboard(); renderCompanies(); }
   renderRequests();
-  if(session.role === "admin"){
-    buildChatList();
-    subscribeRealtime();
-    trackPresence();
-  } else {
-    buildChatList();
-    subscribeRealtime();
-    trackPresence();
-  }
+  buildChatList();
+  if(session.role === "company") openChatFor(session.id, true);
 }
 
 function buildNav(){
@@ -1300,18 +1303,39 @@ async function openChatFor(companyId, isCompanySelf){
   if(currentView !== "chat") showView("chat");
   document.querySelectorAll(".chat-list-item").forEach(el=>el.classList.toggle("active", el.dataset.cid===companyId));
 
-  if(!messagesCache[companyId]){
-    const {data, error} = await sb.from("proc_messages").select("*").eq("company_id", companyId).order("created_at");
-    messagesCache[companyId] = error ? [] : data;
-  }
+  const messages = await loadConversation(companyId);
   unreadByCompany[companyId] = 0;
   updateNavChatBadge();
   buildChatList();
-  renderChatWindow(companyId, isCompanySelf);
+  renderChatWindow(companyId, isCompanySelf, messages);
 
   // mark messages from the other side as read
   const otherType = session.role === "admin" ? "company" : "admin";
   sb.from("proc_messages").update({is_read:true}).eq("company_id", companyId).eq("sender_type", otherType).eq("is_read", false).then(()=>{});
+}
+
+async function loadConversation(companyId, force = false){
+  if(!force && messagesCache[companyId]) return messagesCache[companyId];
+  if(messageLoadPromises[companyId] && !force) return messageLoadPromises[companyId];
+  const request = sb.from("proc_messages").select("*").eq("company_id", companyId).order("created_at")
+    .then(({data, error})=>{
+      if(error) throw error;
+      const existing = messagesCache[companyId] || [];
+      messagesCache[companyId] = [...existing, ...(data || [])]
+        .filter((message, index, all)=>all.findIndex(item=>item.id===message.id)===index)
+        .sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+      return messagesCache[companyId];
+    }).catch(()=>messagesCache[companyId] || []);
+  messageLoadPromises[companyId] = request;
+  try{ return await request; } finally { delete messageLoadPromises[companyId]; }
+}
+
+function appendMessage(message){
+  if(!message || !message.id) return;
+  const messages = messagesCache[message.company_id] || [];
+  if(!messages.some(item=>item.id===message.id)) messages.push(message);
+  messages.sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+  messagesCache[message.company_id] = messages;
 }
 
 function viewImageFull(src){
@@ -1380,15 +1404,17 @@ async function sendChatMessage(){
   const button = document.querySelector(".chat-send");
   if(button) button.disabled = true;
   try{
-    const {error} = await sb.from("proc_messages").insert({
+    const {data, error} = await sb.from("proc_messages").insert({
       company_id: activeChatCompanyId,
       sender_type: session.role,
       sender_id: session.id,
       message: text
-    });
+    }).select().single();
     if(error) throw error;
     input.value = "";
-    await refreshActiveConversation();
+    appendMessage(data);
+    renderChatWindow(activeChatCompanyId);
+    buildChatList();
   }catch(err){
     toast("error", err.message || "Fariinta lama dirin");
   }finally{
@@ -1398,10 +1424,8 @@ async function sendChatMessage(){
 
 async function refreshActiveConversation(){
   if(!sb || !activeChatCompanyId) return;
-  const {data, error} = await sb.from("proc_messages").select("*").eq("company_id", activeChatCompanyId).order("created_at");
-  if(error){ showConnectionNote("Fariinta waa la diray, laakiin wada hadalka lama cusboonaysiin karin."); return; }
-  messagesCache[activeChatCompanyId] = data || [];
-  if(currentView === "chat") renderChatWindow(activeChatCompanyId, session.role === "company");
+  const data = await loadConversation(activeChatCompanyId, true);
+  if(currentView === "chat") renderChatWindow(activeChatCompanyId, session.role === "company", data);
   buildChatList();
 }
 
@@ -1448,7 +1472,7 @@ async function sendChatAttachment(dataUrl, mime, name){
   const caption = captionInput ? captionInput.value.trim() : "";
   if(captionInput) captionInput.value = "";
   try{
-    const {error} = await sb.from("proc_messages").insert({
+    const {data, error} = await sb.from("proc_messages").insert({
       company_id: activeChatCompanyId,
       sender_type: session.role,
       sender_id: session.id,
@@ -1456,9 +1480,11 @@ async function sendChatAttachment(dataUrl, mime, name){
       attachment_data: dataUrl,
       attachment_mime: mime,
       attachment_name: name
-    });
+    }).select().single();
     if(error) throw error;
-    await refreshActiveConversation();
+    appendMessage(data);
+    renderChatWindow(activeChatCompanyId);
+    buildChatList();
   }catch(err){
     toast("error", err.message || "Sawirka lama dirin");
   }
@@ -1476,6 +1502,7 @@ function updateNavChatBadge(){
    REALTIME
 =============================================================*/
 function subscribeRealtime(){
+  if(realtimeChannel) return;
   const channel = sb.channel("proc-live")
     .on("postgres_changes", {event:"*", schema:"public", table:"proc_requests"}, handleRequestChange)
     .on("postgres_changes", {event:"*", schema:"public", table:"proc_responses"}, handleResponseChange);
@@ -1486,7 +1513,21 @@ function subscribeRealtime(){
   } else {
     channel.on("postgres_changes", {event:"*", schema:"public", table:"proc_messages", filter:`company_id=eq.${session.id}`}, handleMessageChange);
   }
-  channel.subscribe();
+  realtimeChannel = channel;
+  channel.subscribe(async (status)=>{
+    if(status === "SUBSCRIBED"){
+      await Promise.all([loadCompanies(), loadRequests()]);
+      if(activeChatCompanyId) await loadConversation(activeChatCompanyId, true);
+      if(session.role === "admin") renderDashboard();
+      renderRequests();
+      buildChatList();
+      if(currentView === "chat" && activeChatCompanyId) renderChatWindow(activeChatCompanyId);
+    }
+    if(status === "CHANNEL_ERROR" || status === "TIMED_OUT"){
+      realtimeChannel = null;
+      setTimeout(()=>{ if(session && sb) subscribeRealtime(); }, 1500);
+    }
+  });
 }
 
 async function handleRequestChange(payload){
@@ -1513,8 +1554,7 @@ async function handleResponseChange(payload){
 function handleMessageChange(payload){
   if(payload.eventType !== "INSERT") return;
   const m = payload.new;
-  if(!messagesCache[m.company_id]) messagesCache[m.company_id] = [];
-  if(!messagesCache[m.company_id].find(x=>x.id===m.id)) messagesCache[m.company_id].push(m);
+  appendMessage(m);
 
   const isMine = m.sender_type === session.role;
   const belongsToMe = session.role==="admin" ? true : m.company_id === session.id;
