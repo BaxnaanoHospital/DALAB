@@ -319,6 +319,8 @@ button{font-family:inherit;cursor:pointer;}
 .btn-ghost{border:1.5px solid var(--border);background:#fff;padding:9px 16px;border-radius:10px;font-weight:600;font-size:13.5px;color:var(--ink);transition:.18s;}
 .btn-ghost:hover{border-color:var(--teal-500);color:var(--teal-700);}
 .btn-ghost.danger:hover{border-color:var(--coral);color:var(--coral);}
+.btn-ghost.delete{color:var(--coral);border-color:var(--coral-100);}
+.btn-ghost.delete:hover{background:var(--coral-100);border-color:var(--coral);}
 .btn-ghost.good:hover{border-color:var(--green);color:var(--green);}
 .response-item{border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-top:10px;background:#FCFCFA;animation:fadeUp .35s both;}
 .response-item .price{font-family:'Fraunces',serif;font-size:20px;color:var(--teal-900);font-weight:600;}
@@ -1257,6 +1259,7 @@ async function openRequestDetail(id){
       <button class="btn-ghost" onclick="updateRequestStatus('${r.id}','closed')"><i class="bi bi-archive"></i> Xir</button>
       <button class="btn-ghost" onclick="openChatFor('${r.company_id}')"><i class="bi bi-chat-dots"></i> La Sheekaayso Shirkadda</button>
       <button class="btn-ghost" onclick="shareRequestWhatsApp('${r.id}')" style="color:#25D366;border-color:#25D366;"><i class="bi bi-whatsapp"></i> U Dir WhatsApp</button>
+      <button class="btn-ghost delete" onclick="deleteRequest('${r.id}')"><i class="bi bi-trash3"></i> Tirtir Codsiga</button>
     </div>`;
   }
   html += `</div>`;
@@ -1292,6 +1295,33 @@ async function updateRequestStatus(id, status){
   await loadRequests();
   openRequestDetail(id);
   if(currentView==="dashboard") renderDashboard();
+}
+
+async function deleteRequest(id){
+  if(session.role !== "admin") return;
+  const request = requests.find(item=>item.id===id);
+  if(!request) return;
+  const result = await Swal.fire({
+    icon:"warning",
+    title:"Tirtir codsigan?",
+    text:`Codsiga "${request.title}" si joogto ah ayaa looga saarayaa nidaamka.`,
+    showCancelButton:true,
+    confirmButtonText:"Haa, tirtir",
+    cancelButtonText:"Jooji",
+    confirmButtonColor:"#E2624F",
+    cancelButtonColor:"#6E7580"
+  });
+  if(!result.isConfirmed) return;
+  const {error} = await sb.from("proc_requests").delete().eq("id", id);
+  if(error){
+    Swal.fire({icon:"error", title:"Codsiga lama tirtirin", text:error.message, confirmButtonColor:"#0B4F4A"});
+    return;
+  }
+  requests = requests.filter(item=>item.id!==id);
+  toast("success", "Codsiga waa la tirtiray");
+  showView("requests");
+  renderRequests();
+  renderDashboard();
 }
 
 function openResponseModal(requestId){
