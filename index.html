@@ -4,7 +4,6 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Codsiyada Baxnaano — Maamule &amp; Shirkadaha</title>
-<link rel="icon" type="image/png" href="https://github.com/Cs-company12/DOCTOR-PANAL/raw/main/11.png">
 <meta name="theme-color" content="#0B4F4A" />
 <link rel="manifest" href="manifest.json" />
 <link rel="icon" href="icon-192.png" />
@@ -189,6 +188,12 @@ button{font-family:inherit;cursor:pointer;}
 
 /* request cards */
 .req-list{display:flex;flex-direction:column;gap:12px;}
+.user-request-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:18px;}
+.user-request-summary .summary-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow-sm);}
+.user-request-summary .summary-card .summary-label{font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.04em;}
+.user-request-summary .summary-card .summary-value{font-family:'Fraunces',serif;font-size:26px;color:var(--teal-900);font-weight:600;margin-top:3px;}
+.user-request-summary .summary-card.is-waiting .summary-value{color:#B7791F;}
+.user-request-summary .summary-card.is-done .summary-value{color:var(--green);}
 .req-card{
   background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;
   display:flex;align-items:center;gap:14px;position:relative;overflow:hidden;transition:.2s;cursor:pointer;
@@ -204,6 +209,22 @@ button{font-family:inherit;cursor:pointer;}
 .req-main{flex:1;min-width:0;}
 .req-main .rno{font-size:11px;color:var(--muted);font-family:'IBM Plex Mono',monospace;}
 .req-main h3{margin:2px 0 6px;font-size:16.5px;color:var(--navy);font-weight:600;}
+.req-card .req-arrow{color:var(--teal-500);font-size:18px;flex:none;transition:.2s;}
+.req-card:hover .req-arrow{transform:translateX(-3px);}
+.req-card .req-deadline{font-size:11.5px;font-weight:700;color:var(--coral);background:var(--coral-100);padding:3px 8px;border-radius:20px;}
+.request-progress{display:flex;align-items:center;gap:0;margin-top:11px;max-width:430px;}
+.request-progress .progress-step{display:flex;align-items:center;gap:5px;font-size:10.5px;color:#A7AAA5;font-weight:700;white-space:nowrap;}
+.request-progress .progress-step::before{content:"";width:9px;height:9px;border:2px solid #C9CCC4;border-radius:50%;background:#fff;box-sizing:border-box;}
+.request-progress .progress-step.active{color:var(--teal-700);}
+.request-progress .progress-step.active::before{border-color:var(--teal-500);background:var(--teal-500);box-shadow:0 0 0 3px var(--teal-100);}
+.request-progress .progress-step.current{color:var(--amber);}
+.request-progress .progress-step.current::before{border-color:var(--amber);background:var(--amber);box-shadow:0 0 0 3px var(--amber-100);}
+.request-progress .progress-step.done{color:var(--green);}
+.request-progress .progress-step.done::before{border-color:var(--green);background:var(--green);box-shadow:0 0 0 3px var(--green-100);}
+.request-progress .progress-line{height:2px;width:28px;background:#E2E3DC;margin:0 6px;}
+.request-progress .progress-line.active{background:var(--teal-500);}
+.request-progress.rejected .progress-step.done{color:var(--coral);}
+.request-progress.rejected .progress-step.done::before{border-color:var(--coral);background:var(--coral);box-shadow:0 0 0 3px var(--coral-100);}
 .req-meta{display:flex;flex-wrap:wrap;gap:12px;font-size:12.5px;color:var(--muted);}
 .req-meta span{display:flex;align-items:center;gap:5px;}
 .empty-state{
@@ -356,6 +377,9 @@ button{font-family:inherit;cursor:pointer;}
   .main{padding:18px 14px 90px;}
   .shell{display:block;}
   .g2{grid-template-columns:1fr;}
+  .user-request-summary{grid-template-columns:repeat(3,1fr);gap:8px;}
+  .user-request-summary .summary-card{padding:11px 10px;}
+  .user-request-summary .summary-card .summary-value{font-size:22px;}
   .chat-shell{height:calc(100vh - 210px);}
   .chat-list{width:100%;position:absolute;inset:0;z-index:5;background:#fff;}
   .chat-list.hide-mobile{display:none;}
@@ -468,6 +492,7 @@ button{font-family:inherit;cursor:pointer;}
           </div>
           <button class="btn-accent" id="newReqBtn" onclick="openRequestModal()"><i class="bi bi-plus-lg"></i> Codsi Cusub</button>
         </div>
+        <div class="user-request-summary" id="userRequestSummary" style="display:none;"></div>
         <div class="tab-row" id="reqTabs"></div>
         <div class="search-wrap"><i class="bi bi-search"></i><input type="text" id="reqSearch" placeholder="Raadi codsi (cinwaan, shirkad)..." oninput="renderRequests()"/></div>
         <div class="req-list" id="reqList"></div>
@@ -818,19 +843,20 @@ async function bootApp(){
   const profileButton = document.getElementById("profileBtn");
   if(profileButton && session.role === "company"){
     profileButton.style.display = "none";
-    document.getElementById("view-requests").style.display = "none";
   }
 
   buildNav();
-  showView(session.role === "admin" ? "dashboard" : "chat");
+  showView(session.role === "admin" ? "dashboard" : "requests");
   subscribeRealtime();
   trackPresence();
 
   if(session.role === "company"){
     buildChatList();
-    await loadConversation(session.id, false, true);
-    renderChatWindow(session.id, true);
-    loadRequests();
+    await Promise.all([
+      loadRequests(),
+      loadConversation(session.id, false, true)
+    ]);
+    renderRequests();
     return;
   }
 
@@ -849,7 +875,8 @@ function buildNav(){
     {id:"chat", icon:"bi-chat-dots", label:"Fariimaha"},
   ];
   const companyNav = [
-    {id:"chat", icon:"bi-chat-dots", label:"Admin Messages"},
+    {id:"requests", icon:"bi-clipboard2-check", label:"Codsiyada"},
+    {id:"chat", icon:"bi-chat-dots", label:"Fariimaha"},
   ];
   const items = session.role === "admin" ? adminNav : companyNav;
   const build = (container, mobile)=>{
@@ -869,7 +896,7 @@ function buildNav(){
 
 function showView(id){
   if(!id) id = "dashboard";
-  if(session.role === "company" && id !== "chat") id = "chat";
+  if(session.role === "company" && !["requests", "detail", "chat"].includes(id)) id = "requests";
   if(currentView !== "detail") prevView = currentView;
   currentView = id;
   document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
@@ -880,6 +907,7 @@ function showView(id){
     document.getElementById("reqViewTitle").textContent = session.role==="admin" ? "Codsiyada" : "Codsiyada Maamulaha uu kuu diray";
     document.getElementById("reqViewSub").textContent = session.role==="admin" ? "Dhammaan codsiyada la diray shirkadaha." : "Codsiyada Maamulaha uu kuu diray.";
     document.getElementById("newReqBtn").style.display = session.role==="admin" ? "flex" : "none";
+    document.getElementById("userRequestSummary").style.display = session.role==="company" ? "grid" : "none";
     buildReqTabs(); renderRequests();
   }
   if(id === "dashboard") renderDashboard();
@@ -1098,11 +1126,24 @@ function reqCardHtml(r){
       <div class="req-meta">
         ${session.role==="admin" ? `<span><i class="bi bi-building"></i> ${escapeHtml(companyName||"—")}</span>` : ""}
         ${r.quantity ? `<span><i class="bi bi-box-seam"></i> ${escapeHtml(r.quantity)}</span>` : ""}
-        ${r.needed_by ? `<span><i class="bi bi-calendar-event"></i> ${r.needed_by}</span>` : ""}
+        ${r.needed_by ? `<span class="req-deadline"><i class="bi bi-calendar-event"></i> Loo baahan yahay: ${r.needed_by}</span>` : ""}
         <span><i class="bi bi-clock-history"></i> ${timeAgo(r.created_at)}</span>
       </div>
+      ${session.role==="company" ? requestProgressHtml(r.status) : ""}
     </div>
     <div class="stamp stamp--${r.status}">${STATUS_LABEL[r.status]}</div>
+    ${session.role==="company" ? `<i class="bi bi-chevron-left req-arrow" aria-hidden="true"></i>` : ""}
+  </div>`;
+}
+function requestProgressHtml(status){
+  const finished = ["accepted","rejected","closed"].includes(status);
+  const working = status === "responded";
+  return `<div class="request-progress ${status === "rejected" ? "rejected" : ""}" aria-label="Horumarka codsiga">
+    <span class="progress-step active">Cusub</span>
+    <span class="progress-line ${working || finished ? "active" : ""}"></span>
+    <span class="progress-step ${working ? "current" : finished ? "active" : ""}">La shaqeynayo</span>
+    <span class="progress-line ${finished ? "active" : ""}"></span>
+    <span class="progress-step ${finished ? "done" : ""}">${status === "rejected" ? "La diiday" : "Go'aan"}</span>
   </div>`;
 }
 function attachReqCardEvents(container){
@@ -1117,9 +1158,23 @@ function renderRequests(){
   const q = (document.getElementById("reqSearch")?.value || "").trim().toLowerCase();
   if(q) list = list.filter(r => (r.title||"").toLowerCase().includes(q) || (r.proc_companies?.company_name||"").toLowerCase().includes(q));
   const el = document.getElementById("reqList");
+  renderUserRequestSummary();
   el.innerHTML = list.length ? list.map(reqCardHtml).join("") :
     `<div class="empty-state"><i class="bi bi-inbox"></i>Ma jiro codsi la beegsaday xaaladdan.</div>`;
   attachReqCardEvents(el);
+}
+
+function renderUserRequestSummary(){
+  const summary = document.getElementById("userRequestSummary");
+  if(!summary || session.role !== "company") return;
+  const waiting = requests.filter(r=>r.status === "pending").length;
+  const answered = requests.filter(r=>r.status === "responded").length;
+  const completed = requests.filter(r=>["accepted","rejected","closed"].includes(r.status)).length;
+  summary.innerHTML = [
+    {label:"Wadar", value:requests.length, className:""},
+    {label:"Sugaya Jawaab", value:waiting, className:"is-waiting"},
+    {label:"La Dhameeyay", value:completed, className:"is-done"}
+  ].map(item=>`<div class="summary-card ${item.className}"><div class="summary-label">${item.label}</div><div class="summary-value">${item.value}</div></div>`).join("");
 }
 
 async function openRequestModal(){
@@ -1158,10 +1213,11 @@ async function submitRequestForm(e){
 }
 
 async function openRequestDetail(id){
-  activeRequestId = id;
-  showView("detail");
   const r = requests.find(x=>x.id===id);
   if(!r) return;
+  if(session.role === "company" && r.company_id !== session.id) return;
+  activeRequestId = id;
+  showView("detail");
   const company = r.proc_companies || (companies.find(c=>c.id===r.company_id) || {});
   const companyName = company.company_name || "";
   const code = "REQ-" + String(r.request_no).padStart(5,"0");
@@ -1181,6 +1237,7 @@ async function openRequestDetail(id){
         <div class="prio prio--${prio}">${PRIO_LABEL[prio]}</div>
       </div>
     </div>
+    ${session.role==="company" ? requestProgressHtml(r.status) : ""}
     ${r.description ? `<p style="color:var(--ink);margin-top:10px;line-height:1.7;">${escapeHtml(r.description)}</p>` : ""}
     <div class="detail-grid">
       ${session.role==="admin" ? `<div><div class="di-lbl">Shirkadda</div><div class="di-val">${escapeHtml(companyName||"—")}</div></div>` : ""}
@@ -1189,7 +1246,8 @@ async function openRequestDetail(id){
       <div><div class="di-lbl">La Diray</div><div class="di-val">${timeAgo(r.created_at)}</div></div>
     </div>`;
 
-  if(session.role === "company" && (r.status === "pending" || r.status==="responded")){
+  const canRespond = session.role === "company" && r.company_id === session.id && ["pending", "responded"].includes(r.status);
+  if(canRespond){
     html += `<div class="decision-row"><button class="btn-accent" onclick="openResponseModal('${r.id}')"><i class="bi bi-reply-fill"></i> Ka Jawaab Codsiga</button></div>`;
   }
   if(session.role === "admin"){
@@ -1225,6 +1283,9 @@ async function openRequestDetail(id){
 }
 
 async function updateRequestStatus(id, status){
+  if(session.role !== "admin" || !["accepted", "rejected", "closed"].includes(status)) return;
+  const request = requests.find(item=>item.id===id);
+  if(!request) return;
   const {error} = await sb.from("proc_requests").update({status, updated_at:new Date().toISOString()}).eq("id", id);
   if(error){ Swal.fire({icon:"error", title:"Khalad", text:error.message}); return; }
   toast("success", "Xaaladda codsiga waa la cusboonaysiiyay");
@@ -1234,6 +1295,8 @@ async function updateRequestStatus(id, status){
 }
 
 function openResponseModal(requestId){
+  const request = requests.find(item=>item.id===requestId);
+  if(session.role !== "company" || !request || request.company_id !== session.id || !["pending", "responded"].includes(request.status)) return;
   activeRequestId = requestId;
   document.getElementById("responseForm").reset();
   document.getElementById("responseModalBackdrop").classList.add("open");
@@ -1243,6 +1306,10 @@ async function submitResponseForm(e){
   const btn = document.getElementById("responseSubmitBtn");
   btn.disabled = true; btn.textContent = "Waa la dirayaa...";
   try{
+    const request = requests.find(item=>item.id===activeRequestId);
+    if(session.role !== "company" || !request || request.company_id !== session.id || !["pending", "responded"].includes(request.status)){
+      throw new Error("Codsigan hadda jawaab lagama diri karo.");
+    }
     const price = document.getElementById("resPrice").value;
     const {error} = await sb.from("proc_responses").insert({
       request_id: activeRequestId,
